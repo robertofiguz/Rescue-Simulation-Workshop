@@ -317,13 +317,13 @@ class BRC:
         kernel = np.ones((5, 5), np.uint8)
         thresh = cv.dilate(thresh, kernel, iterations=1) # Dilate image
         
-        contours, hierarchy = cv.findContours(thresh, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE) # Find all shapes within thresholded image
+        #contours, hierarchy = cv.findContours(thresh, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE) # Find all shapes within thresholded image
         
         # remove small contours
-        contours = [cnt for cnt in contours if cv.contourArea(cnt) >15]
+        #contours = [cnt for cnt in contours if cv.contourArea(cnt) >15]
 
         # show img wirh contours
-        cv.drawContours(img_og, contours, -1, (0, 255, 0), 1)
+        #cv.drawContours(img_og, contours, -1, (0, 255, 0), 1)
         cv.namedWindow("Image", cv.WINDOW_NORMAL)
         cv.imshow("Image", img_og)
         cv.resizeWindow("Image", 400, 300)
