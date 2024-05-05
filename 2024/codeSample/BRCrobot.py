@@ -3,10 +3,12 @@ import cv2 as cv
 import numpy as np 
 import logging
 import json
+import time
 import matplotlib.pyplot as plt
 
 DEFAULT_SPEED = 2
-OBSTACLE_THRESH = 0.1
+OBSTACLE_THRESH = 0.15
+TILE_SIZE = 0.12
 
 class Colors:
     HOLE = (67, 67, 67)
@@ -16,17 +18,15 @@ class Colors:
     A3 = (0, 0, 255)
 
 class RobotPosition:
-    x = 0
-    y = 0
-    z = 0
+    x = TILE_SIZE/2*10**2
+    y = TILE_SIZE/2*10**2
     theta = 0
-
     def __str__(self):
-        return f"x: {self.x}, y: {self.y}, z: {self.z}, theta: {self.theta}"
+        return f"x: {self.x}, y: {self.y}, theta: {self.theta}"
     
     def __repr__(self):
-        return f"x: {self.x}, y: {self.y}, z: {self.z}, theta: {self.theta}"
-
+        return f"x: {self.x}, y: {self.y}, theta: {self.theta}"
+    
 class BRC:
     def __init__(self, robotConfig:str="default"):
         self.logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ class BRC:
         self.timeStep = 32
         self.sensorValues = {}
         self.victim = False
+        self.map = []
         self.available_sensors = {
                 "Distance Sensor": False,
                 "Camera": False,
@@ -54,16 +55,24 @@ class BRC:
     ##################### MOTION MODEL ##################### 
 
     def _updatePosition(self):
-        wheel_radius = 15
-        wheel_distance = 260*2
-        #movement is the enconders
-        wheel_left = robot.sensorValues['wheel1_desloc']*wheel_radius
-        wheel_right = robot.sensorValues['wheel2_desloc']*wheel_radius
-        theta = (wheel_right - wheel_left) / wheel_distance
-        distance = (wheel_right + wheel_left) / 2
-        self.position.x += distance * np.cos(theta)
-        self.position.y += distance * np.sin(theta)
+        wheel_radius = 20.5 * 10**-3 #m
+        wheel_distance = 58 * 10**-3 #m
+
+        #movement is the enconders in radians
+        wheel_left = robot.sensorValues['wheel2_desloc'] * wheel_radius
+        wheel_right = robot.sensorValues['wheel1_desloc']*wheel_radius
+        theta = (wheel_right-wheel_left) / wheel_distance
+
         self.position.theta += theta
+        distance = (wheel_right + wheel_left) / 2
+        self.position.x += distance * np.cos(self.position.theta)*10**2
+        self.position.y += distance * np.sin(self.position.theta)*10**2
+
+        # plot position
+        plt.plot(self.position.x, self.position.y, 'ro')
+        plt.pause(0.001)
+
+        
 
     ##################### SENSORS ##################### 
 
@@ -236,6 +245,7 @@ class BRC:
     def updateSensors(self)->None:
         """Function to update the sensors of the robot
         """        
+        self.available_sensors['lidar'] = False
         if self.available_sensors["Distance Sensor"]:
             for i in range(len(self.distance_sensors)):
                 self.sensorValues["distance_sensor" + str(i+1)] = self.distance_sensors[i].getValue()
@@ -285,6 +295,7 @@ class BRC:
         if self.available_sensors["Lidar"]:
             self.sensorValues["lidar"] = self._pointCloudProcessing(self.lidar.getPointCloud())
             self.logger.info("Lidar updated")
+            pass
         if self.available_sensors["Gyro"]:
             self.sensorValues["gyro"] = self.gyro.getValues()
             self.logger.info("Gyro updated")
@@ -304,8 +315,9 @@ class BRC:
     def updateMotorSpeed(self, speeds:tuple):
         if len(speeds) != len(self.wheels):
             raise ValueError("Number of speeds does not match number of wheels")
-        for i in range(len(self.wheels)):
-            self.wheels[i].setVelocity(speeds[i])
+        # for i in range(len(self.wheels)):
+        self.wheels[1].setVelocity(speeds[0])
+        self.wheels[0].setVelocity(speeds[1])
         
     ##################### LOGIC ##################### 
 
@@ -316,36 +328,73 @@ class BRC:
         _, thresh = cv.threshold(img, 205, 255, cv.THRESH_BINARY) # Threshold image
         kernel = np.ones((5, 5), np.uint8)
         thresh = cv.dilate(thresh, kernel, iterations=1) # Dilate image
-        
-        #contours, hierarchy = cv.findContours(thresh, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE) # Find all shapes within thresholded image
-        
+        # contours, hierarchy = cv.findContours(thresh, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE) # Find all shapes within thresholded image
         # remove small contours
-        #contours = [cnt for cnt in contours if cv.contourArea(cnt) >15]
-
+        # contours = [cnt for cnt in contours if cv.contourArea(cnt) >15]
         # show img wirh contours
-        #cv.drawContours(img_og, contours, -1, (0, 255, 0), 1)
+        # cv.drawContours(img_og, contours, -1, (0, 255, 0), 1)
         cv.namedWindow("Image", cv.WINDOW_NORMAL)
         cv.imshow("Image", img_og)
         cv.resizeWindow("Image", 400, 300)
-        cv.waitKey(1)    
+        cv.waitKey(1)
 
     def _pointCloudProcessing(self, pointCloud):
+        # remove inf and -inf values
         
-        return pointCloud
+        for point in pointCloud:
+            if point.x != float('inf') and point.x != float('-inf'):
+                rotated_x = point.x * np.cos(self.position.theta) - point.y * np.sin(self.position.theta)
+                rotated_y = point.x * np.sin(self.position.theta) + point.y * np.cos(self.position.theta)
+                self.map.append((rotated_x*10 + self.position.x, rotated_y*10 + self.position.y))
+                # print(self.position.x, rotated_x*10)
+        # plt.scatter(*zip(*self.map), s=1)
+        # plt.pause(0.001)
+        # plt.clf()
 
     def checkObstacle(self):
-        if self.sensorValues["distance_sensor2"] < OBSTACLE_THRESH:
-            return True
+        if self.sensorValues["distance_sensor1"] < OBSTACLE_THRESH:
+            return "L"
+        elif self.sensorValues["distance_sensor2"] < OBSTACLE_THRESH:
+            return "F"
+        elif self.sensorValues["distance_sensor3"] < OBSTACLE_THRESH:
+            return "R"
+        else:
+            return None
 
 robot = BRC("/Users/roberto/Projects/Rescue-Simulation-ORG/2024/codeSample/MyAwesomeRobot.json")
 
 while robot._robot.step(robot.timeStep) != -1:
-    robot.updateMotorSpeed((DEFAULT_SPEED, DEFAULT_SPEED))
+    SPEED_LEFT = DEFAULT_SPEED
+    SPEED_RIGHT = DEFAULT_SPEED
     robot.updateSensors()
-    robot._checkVic(robot.sensorValues["camera1"], robot.cameras[0])
+
     if robot.checkObstacle():
-        print("avoiding obstacle")
-        robot.updateMotorSpeed((DEFAULT_SPEED, 0))
+        if robot.checkObstacle() == "L":
+            print("Obstacle on the left")
+            SPEED_LEFT = DEFAULT_SPEED
+            SPEED_RIGHT = -DEFAULT_SPEED
+        elif robot.checkObstacle() == "R":
+            print("Obstacle on the right")
+            SPEED_LEFT = -DEFAULT_SPEED
+            SPEED_RIGHT = DEFAULT_SPEED
+        elif robot.checkObstacle() == "F":
+            print("Obstacle in front")
+            if robot.sensorValues["distance_sensor1"] < robot.sensorValues["distance_sensor3"]:
+                print("Obstacle on the left")
+                SPEED_LEFT = 0
+                SPEED_RIGHT = -DEFAULT_SPEED
+            else:
+                print("Obstacle on the right")
+                SPEED_LEFT = -DEFAULT_SPEED
+                SPEED_RIGHT = 0
+            
     if robot.sensorValues["ground"] == "hole":
-        print("avoiding hole")
-        robot.updateMotorSpeed((DEFAULT_SPEED, -DEFAULT_SPEED))
+        print("Hole detected")
+        SPEED_LEFT = -DEFAULT_SPEED/2
+        SPEED_RIGHT = -DEFAULT_SPEED
+    print("nothing")
+    print(robot.position)
+
+    robot.updateMotorSpeed((SPEED_LEFT, SPEED_RIGHT))
+    
+    
